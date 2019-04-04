@@ -18,6 +18,7 @@ enum Expression {
     Application(Box<Expression>, Box<Expression>),
     Let(String, Box<Expression>, Box<Expression>),
     Annotation(Box<Expression>, Type),
+    Tuple(Box<Expression>, Box<Expression>),
 }
 
 impl fmt::Display for Expression {
@@ -29,6 +30,7 @@ impl fmt::Display for Expression {
             Expression::Application(e1, e2) => write!(f, "{} {}", e1, e2),
             Expression::Let(var, expr, body) => write!(f, "let {} = {} in {}", var, expr, body),
             Expression::Annotation(e, a) => write!(f, "({}: {})", e, a),
+            Expression::Tuple(fst, snd) => write!(f, "({}, {})", fst, snd),
         }
     }
 }
@@ -46,8 +48,8 @@ enum Literal {
 impl fmt::Display for Literal {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self {
-            Literal::Char(val) => write!(f, "{}", val),
-            Literal::String(val) => write!(f, "{}", val),
+            Literal::Char(val) => write!(f, "'{}'", val),
+            Literal::String(val) => write!(f, "'{}'", val),
             Literal::Int(val) => write!(f, "{}", val),
             Literal::Float(val) => write!(f, "{}", val),
             Literal::Bool(val) => write!(f, "{}", val),
@@ -64,6 +66,7 @@ enum Type {
     Existential(String),
     Quantification(String, Box<Type>),
     Function(Box<Type>, Box<Type>),
+    Product(Box<Type>, Box<Type>),
 }
 
 impl fmt::Display for Type {
@@ -74,6 +77,7 @@ impl fmt::Display for Type {
             Type::Existential(ex) => write!(f, "{}^", ex),
             Type::Quantification(a, ty) => write!(f, "(∀{}. {})", a, ty),
             Type::Function(a, c) => write!(f, "({} -> {})", a, c),
+            Type::Product(a, b) => write!(f, "{} × {}", a, b),
         }
     }
 }
@@ -296,6 +300,12 @@ fn checks_against(
             let gamma = context.add(var.clone());
             checks_against(state, &gamma, expr, a).drop(var)
         }
+        //xI
+        (Expression::Tuple(fst, snd), Type::Product(a, b)) => {
+            print_rule("xI");
+            let gamma = checks_against(state, context, fst, a);
+            checks_against(state, &gamma, snd, b)
+        }
         //Sub
         (_, _) => {
             print_rule("Sub");
@@ -312,11 +322,11 @@ fn checks_against(
 
 fn literal_synthesizes_to(literal: &Literal) -> LiteralType {
     match literal {
-        Literal::Char(val) => LiteralType::Char,
-        Literal::String(val) => LiteralType::String,
-        Literal::Int(val) => LiteralType::Int,
-        Literal::Float(val) => LiteralType::Float,
-        Literal::Bool(val) => LiteralType::Bool,
+        Literal::Char(_) => LiteralType::Char,
+        Literal::String(_) => LiteralType::String,
+        Literal::Int(_) => LiteralType::Int,
+        Literal::Float(_) => LiteralType::Float,
+        Literal::Bool(_) => LiteralType::Bool,
         Literal::Unit => LiteralType::Unit,
     }
 }
@@ -369,6 +379,12 @@ fn synthesizes_to(state: &mut State, context: &Context, expr: &Expression) -> (T
                 ),
                 delta,
             );
+        }
+        Expression::Tuple(fst, snd) => {
+            print_rule("SynthProduct");
+            let (a, gamma) = synthesizes_to(state, context, fst);
+            let (b, delta) = synthesizes_to(state, &gamma, snd);
+            return (Type::Product(a.into(), b.into()), delta);
         }
         Expression::Let(var, expr, body) => {
             print_rule("Let");
@@ -455,6 +471,7 @@ fn is_well_formed(context: &Context, type_: &Type) -> bool {
             is_well_formed(&context.add(ContextElement::Variable(alpha.clone())), a)
         }
         Type::Existential(var) => context.has_existential(var) || context.get_solved(var).is_some(),
+        Type::Product(a, b) => is_well_formed(context, a) && is_well_formed(context, b),
     }
 }
 
@@ -476,6 +493,7 @@ fn occurs_in(alpha: &str, a: &Type) -> bool {
             }
         }
         Type::Existential(var) => alpha == var,
+        Type::Product(a, b) => occurs_in(alpha, a) || occurs_in(alpha, b),
     }
 }
 
@@ -519,6 +537,11 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
                 &apply_context(*a2.clone(), &theta),
                 &apply_context(*b2.clone(), &theta),
             );
+        }
+        (Type::Product(a1, b1), Type::Product(a2, b2)) => {
+            print_rule("SubProduct");
+            let gamma = subtype(state, context, a1, a2);
+            subtype(state, &gamma, b1, b2)
         }
         //<:forallL
         (Type::Quantification(alpha, a), _) => {
@@ -712,6 +735,10 @@ fn apply_context(a: Type, context: &Context) -> Type {
         Type::Quantification(alpha, a) => {
             Type::Quantification(alpha, Box::new(apply_context(*a, context)))
         }
+        Type::Product(a, b) => Type::Product(
+            apply_context(*a, context).into(),
+            apply_context(*b, context).into(),
+        ),
     }
 }
 
@@ -744,6 +771,10 @@ fn substitution(a: &Type, alpha: &str, b: &Type) -> Type {
                 a.clone()
             }
         }
+        Type::Product(t1, t2) => Type::Product(
+            substitution(t1, alpha, b).into(),
+            substitution(t2, alpha, b).into(),
+        ),
         Type::Function(t1, t2) => Type::Function(
             Box::new(substitution(t1, alpha, b)),
             Box::new(substitution(t2, alpha, b)),
@@ -833,6 +864,109 @@ fn idunit() {
             literal_string().into()
         )),
         Type::Literal(LiteralType::String)
+    )
+}
+
+#[test]
+fn tuples() {
+    assert_eq!(
+        synth(Expression::Tuple(
+            literal_string().into(),
+            literal_bool().into()
+        )),
+        Type::Product(
+            Type::Literal(LiteralType::String).into(),
+            Type::Literal(LiteralType::Bool).into()
+        )
+    )
+}
+
+#[test]
+fn tuples_in_lambda() {
+    assert_eq!(
+        synth(construct_app(
+            Expression::Abstraction(
+                "x".into(),
+                Expression::Tuple(
+                    Expression::Variable("x".into()).into(),
+                    Expression::Variable("x".into()).into()
+                )
+                .into()
+            ),
+            literal_string()
+        )),
+        Type::Product(
+            Type::Literal(LiteralType::String).into(),
+            Type::Literal(LiteralType::String).into(),
+        )
+    )
+}
+
+#[test]
+fn nested_tuples() {
+    assert_eq!(
+        synth(construct_app(
+            Expression::Abstraction(
+                "x".into(),
+                Expression::Tuple(
+                    Expression::Variable("x".into()).into(),
+                    Expression::Tuple(
+                        Expression::Variable("x".into()).into(),
+                        Expression::Variable("x".into()).into()
+                    )
+                    .into()
+                )
+                .into()
+            ),
+            literal_string()
+        )),
+        Type::Product(
+            Type::Literal(LiteralType::String).into(),
+            Type::Product(
+                Type::Literal(LiteralType::String).into(),
+                Type::Literal(LiteralType::String).into()
+            )
+            .into()
+        )
+    )
+}
+
+#[test]
+fn tuples_in_fn() {
+    assert_eq!(
+        synth(Expression::Application(
+            id_fn().into(),
+            Expression::Tuple(literal_string().into(), literal_bool().into()).into()
+        )),
+        Type::Product(
+            Type::Literal(LiteralType::String).into(),
+            Type::Literal(LiteralType::Bool).into()
+        )
+    )
+}
+
+#[test]
+fn generalised_let() {
+    assert_eq!(
+        synth(construct_let(
+            "newid",
+            id_fn().into(),
+            //Without annotation, e.g.
+            //Expression::Abstraction("x".into(), Expression::Variable("x".into()).into(),).into(),
+            //It fails.
+            Expression::Tuple(
+                construct_app(
+                    Expression::Variable("newid".into()),
+                    literal_string().into()
+                )
+                .into(),
+                construct_app(Expression::Variable("newid".into()), literal_bool().into()).into()
+            )
+        )),
+        Type::Product(
+            Type::Literal(LiteralType::String).into(),
+            Type::Literal(LiteralType::Bool).into()
+        )
     )
 }
 
