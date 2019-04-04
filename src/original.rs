@@ -4,8 +4,6 @@
 //! The main focus of this implementation lies beeing able to follow the paper while reading it
 //! I tried to keep naming consistent and referencing where things are defined in the paper
 //! No sensible error reporting is implemented. Failures will simply result in panics
-//!
-//! This is an extended version. Check out original.rs for the original implementation.
 
 use std::fmt;
 
@@ -13,7 +11,7 @@ use std::fmt;
 #[derive(Clone, Debug)]
 enum Expression {
     Variable(String),
-    Literal(Literal),
+    Unit,
     Abstraction(String, Box<Expression>),
     Application(Box<Expression>, Box<Expression>),
     Annotation(Box<Expression>, Type),
@@ -22,7 +20,7 @@ enum Expression {
 impl fmt::Display for Expression {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self {
-            Expression::Literal(lit) => write!(f, "{}", lit),
+            Expression::Unit => write!(f, "()"),
             Expression::Variable(var) => write!(f, "{}", var),
             Expression::Abstraction(alpha, e) => write!(f, "(\\{} -> {})", alpha, e),
             Expression::Application(e1, e2) => write!(f, "{} {}", e1, e2),
@@ -31,74 +29,24 @@ impl fmt::Display for Expression {
     }
 }
 
-#[derive(Clone, Debug)]
-enum Literal {
-    Char(char),
-    String(String),
-    Int(isize),
-    Float(f64),
-    Bool(bool),
-    Unit,
-}
-
-impl fmt::Display for Literal {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match self {
-            Literal::Char(val) => write!(f, "{}", val),
-            Literal::String(val) => write!(f, "{}", val),
-            Literal::Int(val) => write!(f, "{}", val),
-            Literal::Float(val) => write!(f, "{}", val),
-            Literal::Bool(val) => write!(f, "{}", val),
-            Literal::Unit => write!(f, "()"),
-        }
-    }
-}
-
-
-
 ///Figure 6
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Type {
-    Literal(LiteralType),
+    Unit,
     Variable(String),
     Existential(String),
     Quantification(String, Box<Type>),
     Function(Box<Type>, Box<Type>),
 }
 
-
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self {
-            Type::Literal(lit) => write!(f, "{}", lit),
+            Type::Unit => write!(f, "()"),
             Type::Variable(var) => write!(f, "{}", var),
             Type::Existential(ex) => write!(f, "{}^", ex),
             Type::Quantification(a, ty) => write!(f, "(∀{}. {})", a, ty),
             Type::Function(a, c) => write!(f, "({} -> {})", a, c),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum LiteralType {
-    Unit,
-    Char,
-    String,
-    Int,
-    Float,
-    Bool
-}
-
-
-impl fmt::Display for LiteralType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match self {
-            LiteralType::Unit => write!(f, "()"),
-            LiteralType::Char => write!(f, "Char"),
-            LiteralType::String => write!(f, "String"),
-            LiteralType::Int => write!(f, "Int"),
-            LiteralType::Float => write!(f, "Float"),
-            LiteralType::Bool => write!(f, "Bool"),
         }
     }
 }
@@ -258,18 +206,6 @@ impl State {
     }
 }
 
-fn literal_checks_against(literal: &Literal, type_: &LiteralType) -> bool {
-    match (literal, type_) {
-        (Literal::Char(_), LiteralType::Char) => true,
-        (Literal::String(_), LiteralType::String) => true,
-        (Literal::Int(_), LiteralType::Int) => true,
-        (Literal::Float(_), LiteralType::Float) => true,
-        (Literal::Bool(_), LiteralType::Bool) => true,
-        (Literal::Unit, LiteralType::Unit) => true,
-        _ => false,
-    }
-}
-
 /// Figure 11.
 fn checks_against(
     state: &mut State,
@@ -281,9 +217,8 @@ fn checks_against(
     assert!(is_well_formed(context, type_));
     match (expr, type_) {
         //1I
-        (Expression::Literal(lit), Type::Literal(lit_ty)) => {
+        (Expression::Unit, Type::Unit) => {
             print_rule("1I");
-            assert!(literal_checks_against(lit, lit_ty));
             context.clone()
         }
         //->I
@@ -314,25 +249,14 @@ fn checks_against(
     }
 }
 
-fn literal_synthesizes_to(literal: &Literal) -> LiteralType {
-    match literal {
-        Literal::Char(val) => LiteralType::Char,
-        Literal::String(val) => LiteralType::String,
-        Literal::Int(val) => LiteralType::Int,
-        Literal::Float(val) => LiteralType::Float,
-        Literal::Bool(val) => LiteralType::Bool,
-        Literal::Unit => LiteralType::Unit,
-    }
-}
-
 ///Figure 11
 fn synthesizes_to(state: &mut State, context: &Context, expr: &Expression) -> (Type, Context) {
     print_helper("synth", format!("{}", expr), "".into(), context);
     match expr {
         //1I=>
-        Expression::Literal(lit) => {
+        Expression::Unit => {
             print_rule("1I=>");
-            (Type::Literal(literal_synthesizes_to(lit)), context.clone())
+            (Type::Unit, context.clone())
         }
         //Var
         Expression::Variable(x) => {
@@ -440,7 +364,7 @@ fn application_synthesizes_to(
 /// Figure 7
 fn is_well_formed(context: &Context, type_: &Type) -> bool {
     match type_ {
-        Type::Literal(_) => true,
+        Type::Unit => true,
         Type::Variable(var) => context.has_variable(var),
         Type::Function(a, b) => is_well_formed(context, a) && is_well_formed(context, b),
         Type::Quantification(alpha, a) => {
@@ -457,7 +381,7 @@ fn is_well_formed(context: &Context, type_: &Type) -> bool {
 /// https://github.com/ollef/Bidirectional and https://github.com/atennapel/bidirectional.js
 fn occurs_in(alpha: &str, a: &Type) -> bool {
     match a {
-        Type::Literal(_) => false,
+        Type::Unit => false,
         Type::Variable(var) => alpha == var,
         Type::Function(t1, t2) => occurs_in(alpha, t1) || occurs_in(alpha, t2),
         Type::Quantification(beta, t) => {
@@ -478,9 +402,8 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
     assert!(is_well_formed(context, b));
     match (a, b) {
         //<:Unit
-        (Type::Literal(lit_a), Type::Literal(lit_b)) => {
+        (Type::Unit, Type::Unit) => {
             print_rule("<:Unit");
-            assert_eq!(lit_a, lit_b);
             context.clone()
         }
         //<:Var
@@ -687,7 +610,7 @@ fn instantiate_r(state: &mut State, context: &Context, a: &Type, alpha: &str) ->
 /// Figure 8
 fn apply_context(a: Type, context: &Context) -> Type {
     match a {
-        Type::Literal(_) => a,
+        Type::Unit => a,
         Type::Variable(_) => a,
         Type::Existential(ref alpha) => {
             if let Some(tau) = context.get_solved(alpha) {
@@ -715,7 +638,7 @@ fn apply_context(a: Type, context: &Context) -> Type {
 /// Substitution is written in the paper as [α^/α]A which means, α is replaced with α^ in all occurrences in A
 fn substitution(a: &Type, alpha: &str, b: &Type) -> Type {
     match a {
-        Type::Literal(_) => a.clone(),
+        Type::Unit => Type::Unit,
         Type::Variable(var) => {
             if var == alpha {
                 b.clone()
@@ -769,39 +692,19 @@ fn print_rule(rule: &str) {
     println!("{:>20}", rule);
 }
 
-fn literal_string() -> Expression {
-    Expression::Literal(Literal::String("Test".into()))
-}
-
-fn literal_bool() -> Expression {
-    Expression::Literal(Literal::Bool(true))
-}
-
-
 #[test]
 fn basic() {
-    assert_eq!(synth(literal_string()), Type::Literal(LiteralType::String));
+    assert_eq!(synth(Expression::Unit), Type::Unit);
 }
 
 #[test]
-fn application_string() {
+fn application() {
     assert_eq!(
         synth(Expression::Application(
             Expression::Abstraction("x".into(), Expression::Variable("x".into()).into(),).into(),
-            literal_string().into(),
+            Expression::Unit.into(),
         )),
-        Type::Literal(LiteralType::String)
-    );
-}
-
-#[test]
-fn application_bool() {
-    assert_eq!(
-        synth(Expression::Application(
-            Expression::Abstraction("x".into(), Expression::Variable("x".into()).into(),).into(),
-            literal_bool().into(),
-        )),
-        Type::Literal(LiteralType::Bool)
+        Type::Unit
     );
 }
 
@@ -824,9 +727,9 @@ fn idunit() {
     assert_eq!(
         synth(Expression::Application(
             id_fn().into(),
-            literal_string().into()
+            Expression::Unit.into()
         )),
-        Type::Literal(LiteralType::String)
+        Type::Unit
     )
 }
 
