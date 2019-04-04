@@ -16,6 +16,7 @@ enum Expression {
     Literal(Literal),
     Abstraction(String, Box<Expression>),
     Application(Box<Expression>, Box<Expression>),
+    Let(String, Box<Expression>, Box<Expression>),
     Annotation(Box<Expression>, Type),
 }
 
@@ -26,6 +27,7 @@ impl fmt::Display for Expression {
             Expression::Variable(var) => write!(f, "{}", var),
             Expression::Abstraction(alpha, e) => write!(f, "(\\{} -> {})", alpha, e),
             Expression::Application(e1, e2) => write!(f, "{} {}", e1, e2),
+            Expression::Let(var, expr, body) => write!(f, "let {} = {} in {}", var, expr, body),
             Expression::Annotation(e, a) => write!(f, "({}: {})", e, a),
         }
     }
@@ -54,8 +56,6 @@ impl fmt::Display for Literal {
     }
 }
 
-
-
 ///Figure 6
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Type {
@@ -65,7 +65,6 @@ enum Type {
     Quantification(String, Box<Type>),
     Function(Box<Type>, Box<Type>),
 }
-
 
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
@@ -86,9 +85,8 @@ enum LiteralType {
     String,
     Int,
     Float,
-    Bool
+    Bool,
 }
-
 
 impl fmt::Display for LiteralType {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
@@ -153,7 +151,6 @@ impl fmt::Display for Context {
         write!(f, "]")
     }
 }
-
 
 /// Context operations derive from "Hole notation" described in 3.1 and the fact that the context is ordered.
 impl Context {
@@ -236,7 +233,6 @@ impl Context {
         None
     }
 }
-
 
 /// The state is used to generate new existentials.
 /// (In the paper mostly notated as α^ α1^ or β^)
@@ -374,6 +370,18 @@ fn synthesizes_to(state: &mut State, context: &Context, expr: &Expression) -> (T
                 delta,
             );
         }
+        Expression::Let(var, expr, body) => {
+            print_rule("Let");
+            let (t0, gamma) = synthesizes_to(state, context, expr);
+            let theta = gamma.add(ContextElement::TypedVariable(var.clone(), t0.clone()));
+
+            let (t1, delta) = synthesizes_to(state, &theta, body);
+            return (
+                t1,
+                delta.insert_in_place(ContextElement::TypedVariable(var.clone(), t0), vec![]),
+            );
+        }
+
         //->E
         Expression::Application(e1, e2) => {
             print_rule("->E");
@@ -553,7 +561,6 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
         }
     }
 }
-
 
 /// Figure 10
 fn instantiate_l(state: &mut State, context: &Context, alpha: &str, b: &Type) -> Context {
@@ -777,7 +784,6 @@ fn literal_bool() -> Expression {
     Expression::Literal(Literal::Bool(true))
 }
 
-
 #[test]
 fn basic() {
     assert_eq!(synth(literal_string()), Type::Literal(LiteralType::String));
@@ -828,6 +834,42 @@ fn idunit() {
         )),
         Type::Literal(LiteralType::String)
     )
+}
+
+#[test]
+fn let_binding() {
+    assert_eq!(
+        synth(Expression::Let(
+            "a".into(),
+            literal_bool().into(),
+            Expression::Application(id_fn().into(), Expression::Variable("a".into()).into()).into()
+        )),
+        Type::Literal(LiteralType::Bool)
+    )
+}
+
+#[test]
+fn let_fn() {
+    assert_eq!(
+        synth(construct_app(
+            construct_let(
+                "newid",
+                Expression::Abstraction("x".into(), Expression::Variable("x".into()).into(),)
+                    .into(),
+                Expression::Variable("newid".into())
+            ),
+            literal_string().into()
+        )),
+        Type::Literal(LiteralType::String)
+    );
+}
+
+fn construct_app(e0: Expression, e1: Expression) -> Expression {
+    Expression::Application(e0.into(), e1.into())
+}
+
+fn construct_let(var: &str, e0: Expression, body: Expression) -> Expression {
+    Expression::Let(var.into(), e0.into(), body.into())
 }
 
 fn id_fn() -> Expression {
