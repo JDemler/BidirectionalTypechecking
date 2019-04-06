@@ -607,6 +607,7 @@ fn instantiate_r(state: &mut State, context: &Context, a: &Type, alpha: &str) ->
     }
 }
 
+
 /// Figure 8
 fn apply_context(a: Type, context: &Context) -> Type {
     match a {
@@ -615,10 +616,8 @@ fn apply_context(a: Type, context: &Context) -> Type {
         Type::Existential(ref alpha) => {
             if let Some(tau) = context.get_solved(alpha) {
                 apply_context(tau.clone(), context)
-            } else if context.has_existential(alpha) {
-                a
             } else {
-                panic!();
+                a
             }
         }
         Type::Function(a, b) => Type::Function(

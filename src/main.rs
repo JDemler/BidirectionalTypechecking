@@ -637,17 +637,13 @@ fn instantiate_l(state: &mut State, context: &Context, alpha: &str, b: &Type) ->
         //InstLReach
         Type::Existential(beta) => {
             print_rule("InstLReach");
-            if is_well_formed(&right_context, b) {
-                return context.insert_in_place(
-                    ContextElement::Existential(beta.clone()),
-                    vec![ContextElement::Solved(
-                        beta.clone(),
-                        Type::Existential(alpha.into()),
-                    )],
-                );
-            } else {
-                panic!();
-            }
+            return context.insert_in_place(
+                ContextElement::Existential(beta.clone()),
+                vec![ContextElement::Solved(
+                    beta.clone(),
+                    Type::Existential(alpha.into()),
+                )],
+            );
         }
         _ => panic!(),
     }
@@ -655,6 +651,7 @@ fn instantiate_l(state: &mut State, context: &Context, alpha: &str, b: &Type) ->
 
 /// Figure 10
 fn instantiate_r(state: &mut State, context: &Context, a: &Type, alpha: &str) -> Context {
+    print_helper("instantiate_r", format!("{}", a), alpha.into(), context);
     let (left_context, right_context) =
         context.split_at(ContextElement::Existential(alpha.to_string()));
 
@@ -668,24 +665,30 @@ fn instantiate_r(state: &mut State, context: &Context, a: &Type, alpha: &str) ->
     match a {
         //InstRArr
         Type::Function(a1, a2) => {
+            print_rule("InstRArr");
             let alpha1 = state.fresh_existential();
             let alpha2 = state.fresh_existential();
-            let gamma = context
-                .add(ContextElement::Existential(alpha2.clone()))
-                .add(ContextElement::Existential(alpha1.clone()))
-                .add(ContextElement::Solved(
-                    alpha.into(),
-                    Type::Function(
-                        Box::new(Type::Existential(alpha1.clone())),
-                        Box::new(Type::Existential(alpha2.clone())),
+            let gamma = context.insert_in_place(
+                ContextElement::Existential(alpha.into()),
+                vec![
+                    ContextElement::Existential(alpha2.clone()),
+                    ContextElement::Existential(alpha1.clone()),
+                    ContextElement::Solved(
+                        alpha.into(),
+                        Type::Function(
+                            Box::new(Type::Existential(alpha1.clone())),
+                            Box::new(Type::Existential(alpha2.clone())),
+                        ),
                     ),
-                ));
+                ],
+            );
             let theta = instantiate_l(state, &gamma, &alpha1, a1);
             let delta = instantiate_r(state, &theta, &apply_context(*a2.clone(), &theta), &alpha2);
             return delta;
         }
-        //InstRAIIL
+        //InstRAllL
         Type::Quantification(beta, b) => {
+            print_rule("InstRAllL");
             let beta1 = state.fresh_existential();
             let gamma = context
                 .add(ContextElement::Marker(beta1.clone()))
@@ -699,16 +702,38 @@ fn instantiate_r(state: &mut State, context: &Context, a: &Type, alpha: &str) ->
 
             return delta.drop(ContextElement::Marker(beta1.clone()));
         }
+        Type::Product(a, b) => {
+            print_rule("InstRProd");
+            let alpha1 = state.fresh_existential();
+            let beta1 = state.fresh_existential();
+            let gamma = context.insert_in_place(
+                ContextElement::Existential(alpha.into()),
+                vec![
+                    ContextElement::Existential(beta1.clone()),
+                    ContextElement::Existential(alpha1.clone()),
+                    ContextElement::Solved(
+                        alpha.into(),
+                        Type::Product(
+                            Box::new(Type::Existential(alpha1.clone())),
+                            Box::new(Type::Existential(beta1.clone())),
+                        ),
+                    ),
+                ],
+            );
+            let theta = instantiate_l(state, &gamma, &alpha1, a);
+            let delta = instantiate_r(state, &theta, &apply_context(*b.clone(), &theta), &beta1);
+            return delta;
+        }
         //InstRReach
         Type::Existential(beta) => {
-            if is_well_formed(&right_context, a) {
-                return context.add(ContextElement::Solved(
+            print_rule("InstRReach");
+            return context.insert_in_place(
+                ContextElement::Existential(beta.clone()),
+                vec![ContextElement::Solved(
                     beta.clone(),
                     Type::Existential(alpha.into()),
-                ));
-            } else {
-                panic!();
-            }
+                )],
+            );
         }
         _ => panic!(),
     }
@@ -722,10 +747,8 @@ fn apply_context(a: Type, context: &Context) -> Type {
         Type::Existential(ref alpha) => {
             if let Some(tau) = context.get_solved(alpha) {
                 apply_context(tau.clone(), context)
-            } else if context.has_existential(alpha) {
-                a
             } else {
-                panic!();
+                a
             }
         }
         Type::Function(a, b) => Type::Function(
